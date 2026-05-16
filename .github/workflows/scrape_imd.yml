@@ -1,1 +1,72 @@
+name: IMD TPCODL Warning Scraper
 
+on:
+  # Triggered by Supabase pg_cron → Edge Function → workflow_dispatch
+  # Fires every 15 minutes (96×/day) for IST-aligned scanning.
+  workflow_dispatch:
+
+# Cancel any in-progress run when a new trigger fires.
+# Prevents run pile-up at 96 triggers/day.
+concurrency:
+  group: imd-scraper
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium
+
+      - name: Run scraper
+        run: python scripts/scrape_imd.py
+        env:
+          IMD_STATE_ID: '10'
+          PYTHONUNBUFFERED: '1'
+          GMAIL_FROM:         ${{ secrets.GMAIL_FROM }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO:     ${{ secrets.ALERT_EMAIL_TO }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+
+      - name: Commit and push data
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Force-add PNGs (bypasses gitignore; ensures new files are tracked)
+          git add -f data/*.png
+          git add data/district_warnings_latest.csv
+
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+          git commit --allow-empty -m "data: IMD scrape ${TIMESTAMP}"
+          git push
+
+      - name: Upload snapshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imd-snapshots-failure
+          path: |
+            data/*.png
+            data/*.csv
+          retention-days: 2
+          if-no-files-found: ignore
