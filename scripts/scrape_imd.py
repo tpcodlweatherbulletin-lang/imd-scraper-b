@@ -10,7 +10,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 from pathlib import Path
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
@@ -48,6 +48,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://odrvhelastdyozjejqss.supabase.
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 DISTRICT_TABLE = "district_warnings"
+
+# ── IST timezone (UTC+5:30) ───────────────────────────────────
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # ── Colour maps ───────────────────────────────────────────────
 HEX_TO_COLOR_NAME = {
@@ -177,6 +180,53 @@ def marker_filename_to_color(href: str) -> str:
         "red":    "#ff0000",
     }
     return color_map.get(m.group(1).lower(), "")
+
+
+# ─────────────────────────────────────────────────────────────
+# TIME HELPERS
+# ─────────────────────────────────────────────────────────────
+
+def ist_now_human() -> str:
+    """Return current IST time as 'Reported at HH:MM Hrs' string for email."""
+    return datetime.now(IST).strftime("%H:%M")
+
+
+def extract_time_only(issued_at_str: str) -> str:
+    """
+    Extract time part only from issued_at string.
+    Input formats seen: '2026-05-17 1600', '2026-05-17 16:00', '1600'
+    Returns: '16:00' or original string if unparseable.
+    """
+    if not issued_at_str:
+        return "—"
+    # Try extracting trailing 4-digit time e.g. '1600' or '0130'
+    m = re.search(r"(\d{4})$", issued_at_str.strip())
+    if m:
+        t = m.group(1)
+        return f"{t[:2]}:{t[2:]}"
+    # Try HH:MM format already present
+    m2 = re.search(r"(\d{1,2}:\d{2})", issued_at_str)
+    if m2:
+        return m2.group(1)
+    return issued_at_str.strip()
+
+
+def format_valid_upto(valid_upto_str: str) -> str:
+    """
+    Format valid_upto to HH:MM.
+    Input formats: '1900', '19:00', '19'
+    Returns: '19:00'
+    """
+    if not valid_upto_str:
+        return "—"
+    s = valid_upto_str.strip()
+    if re.match(r"^\d{4}$", s):
+        return f"{s[:2]}:{s[2:]}"
+    if re.match(r"^\d{1,2}:\d{2}$", s):
+        return s
+    if re.match(r"^\d{1,2}$", s):
+        return f"{int(s):02d}:00"
+    return s
 
 
 # ─────────────────────────────────────────────────────────────
@@ -426,12 +476,13 @@ def read_previous_state(sb: Client) -> dict:
     district_warnings for this state_id.
     If table is empty (cold start), returns {} — callers treat missing
     entries as rank 0 (green).
+    FIX: cast STATE_ID to int to match int4 column type.
     """
     try:
         resp = (
             sb.table(DISTRICT_TABLE)
             .select("name, warning_color")
-            .eq("state_id", STATE_ID)
+            .eq("state_id", int(STATE_ID))      # ← FIX: int cast matches int4 column
             .execute()
         )
         prev = {}
@@ -506,6 +557,8 @@ def _build_district_table(escalated: list) -> str:
     rows = ""
     for r in escalated:
         badge = _badge(r["warning_color"], r["severity"])
+        issued_display = extract_time_only(r.get("issued_at", ""))
+        valid_display  = format_valid_upto(r.get("valid_upto", ""))
         rows += (
             f"<tr>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
@@ -513,9 +566,9 @@ def _build_district_table(escalated: list) -> str:
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
             f"text-align:center;'>{badge}</td>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;'>{r.get('issued_at', '—')}</td>"
+            f"font-size:12px;color:#555;'>{issued_display} Hrs</td>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;'>{r.get('valid_upto', '—')} Hrs</td>"
+            f"font-size:12px;color:#555;'>{valid_display} Hrs</td>"
             f"</tr>"
         )
     return f"""
@@ -566,6 +619,48 @@ def _build_ops_table(escalated: list) -> str:
     </table>"""
 
 
+def _build_kalabaisakhi_summary(escalated: list) -> str:
+    """
+    Build bullet-point Kalabaisakhi summary lines after the district table.
+    One line per escalated district:
+      • Start time of KALABAISAKHI : 16:00 Hrs and expected stop time is 19:00 Hrs
+        in Nayagarh District and associated Divisions (NYED, NAYAGARH; KHED, KHORDHA).
+    """
+    lines = []
+    for r in escalated:
+        name      = r["name"].upper()
+        mapping   = TPCODL_MAP.get(name, {})
+        divisions = ", ".join(mapping.get("divisions", ["-"]))
+        issued    = extract_time_only(r.get("issued_at", ""))
+        valid     = format_valid_upto(r.get("valid_upto", ""))
+        lines.append(
+            f"<li style='margin-bottom:6px;font-size:13px;color:#333;'>"
+            f"Start time of <strong>KALABAISAKHI</strong> : <strong>{issued} Hrs</strong> "
+            f"and expected stop time is <strong>{valid} Hrs</strong> "
+            f"in <strong>{r['name'].title()} District</strong> "
+            f"and associated Divisions ({divisions})."
+            f"</li>"
+        )
+    return "<ul style='padding-left:20px;margin:8px 0 0;'>" + "".join(lines) + "</ul>"
+
+
+def _build_kalabaisakhi_summary_plain(escalated: list) -> str:
+    """Plain-text version of Kalabaisakhi summary for email plain part."""
+    lines = []
+    for r in escalated:
+        name      = r["name"].upper()
+        mapping   = TPCODL_MAP.get(name, {})
+        divisions = ", ".join(mapping.get("divisions", ["-"]))
+        issued    = extract_time_only(r.get("issued_at", ""))
+        valid     = format_valid_upto(r.get("valid_upto", ""))
+        lines.append(
+            f"  • Start time of KALABAISAKHI : {issued} Hrs and expected stop time "
+            f"is {valid} Hrs in {r['name'].title()} District "
+            f"and associated Divisions ({divisions})."
+        )
+    return "\n".join(lines)
+
+
 def _subject_counts(escalated: list) -> tuple[int, int]:
     """Return (unique_circle_count, unique_division_count) across all escalated districts."""
     circles   = set()
@@ -580,15 +675,53 @@ def _subject_counts(escalated: list) -> tuple[int, int]:
     return len(circles), len(divisions)
 
 
-def build_email_html(escalated: list, timestamp_human: str) -> str:
+def build_email_plain(escalated: list, reported_at_ist: str) -> str:
+    kalabaisakhi_plain = _build_kalabaisakhi_summary_plain(escalated)
+    lines = [
+        "IMD TPCODL WARNING ALERT",
+        f"Reported at: {reported_at_ist} Hrs",
+        "=" * 60,
+        "",
+        "DISTRICT WARNING STATUS",
+        "-" * 40,
+    ]
+    for r in escalated:
+        issued = extract_time_only(r.get("issued_at", ""))
+        valid  = format_valid_upto(r.get("valid_upto", ""))
+        lines.append(
+            f"  {r['name']}  |  {r['severity'].upper()}  ({r['warning_color']})"
+            f"  |  Issued: {issued} Hrs  Valid upto: {valid} Hrs"
+        )
+    lines += [
+        "",
+        "KALABAISAKHI TIMING SUMMARY",
+        "-" * 40,
+        kalabaisakhi_plain,
+        "",
+        "AFFECTED TPCODL CIRCLES & DIVISIONS",
+        "-" * 40,
+    ]
+    for r in escalated:
+        name    = r["name"].upper()
+        mapping = TPCODL_MAP.get(name, {})
+        circles   = ", ".join(mapping.get("circles",   ["-"]))
+        divisions = ", ".join(mapping.get("divisions", ["-"]))
+        lines.append(f"  {r['name']}")
+        lines.append(f"    Circles  : {circles}")
+        lines.append(f"    Divisions: {divisions}")
+    lines += ["", "=" * 60, "Source: IMD Nowcast Warning system"]
+    return "\n".join(lines)
+
+
+def build_email_html(escalated: list, reported_at_ist: str) -> str:
     # Determine highest severity label for header colour
     has_red    = any(r["warning_color"].lower() == "red"    for r in escalated)
-    has_orange = any(r["warning_color"].lower() == "orange" for r in escalated)
     header_bg  = "#cc0000" if has_red else "#e07000"
     sev_label  = "⛔ WARNING" if has_red else "🚨 ALERT"
 
-    district_table = _build_district_table(escalated)
-    ops_table      = _build_ops_table(escalated)
+    district_table       = _build_district_table(escalated)
+    kalabaisakhi_summary = _build_kalabaisakhi_summary(escalated)
+    ops_table            = _build_ops_table(escalated)
 
     district_names = ", ".join(r["name"].title() for r in escalated)
 
@@ -604,19 +737,28 @@ def build_email_html(escalated: list, timestamp_human: str) -> str:
         {sev_label} — IMD Nowcast Warning (TPCODL)
       </h2>
       <p style="margin:6px 0 0;color:rgba(255,255,255,.85);font-size:12px;">
-        Scraped at {timestamp_human} &nbsp;|&nbsp; Districts: {district_names}
+        Reported at {reported_at_ist} Hrs (IST) &nbsp;|&nbsp; Districts: {district_names}
       </p>
     </div>
 
     <div style="padding:24px 28px;">
 
-      <!-- Table 1 -->
+      <!-- Table 1: District Warning Status -->
       <h3 style="margin:0 0 10px;color:#1B3A6B;font-size:14px;letter-spacing:.3px;">
         DISTRICT WARNING STATUS
       </h3>
       {district_table}
 
-      <!-- Table 2 -->
+      <!-- Kalabaisakhi Timing Summary -->
+      <div style="margin-top:16px;padding:12px 16px;background:#fff8e1;
+                  border-left:4px solid #e07000;border-radius:4px;">
+        <p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#1B3A6B;">
+          KALABAISAKHI TIMING SUMMARY
+        </p>
+        {kalabaisakhi_summary}
+      </div>
+
+      <!-- Table 2: Circles & Divisions -->
       <h3 style="margin:24px 0 10px;color:#1B3A6B;font-size:14px;letter-spacing:.3px;">
         AFFECTED TPCODL CIRCLES &amp; DIVISIONS
       </h3>
@@ -636,46 +778,20 @@ def build_email_html(escalated: list, timestamp_human: str) -> str:
 </html>"""
 
 
-def build_email_plain(escalated: list, timestamp_human: str) -> str:
-    lines = [
-        "IMD TPCODL WARNING ALERT",
-        f"Scraped at: {timestamp_human}",
-        "=" * 60,
-        "",
-        "DISTRICT WARNING STATUS",
-        "-" * 40,
-    ]
-    for r in escalated:
-        lines.append(
-            f"  {r['name']}  |  {r['severity'].upper()}  ({r['warning_color']})"
-            f"  |  Issued: {r.get('issued_at','—')}  Valid upto: {r.get('valid_upto','—')} Hrs"
-        )
-    lines += ["", "AFFECTED TPCODL CIRCLES & DIVISIONS", "-" * 40]
-    for r in escalated:
-        name    = r["name"].upper()
-        mapping = TPCODL_MAP.get(name, {})
-        circles   = ", ".join(mapping.get("circles",   ["-"]))
-        divisions = ", ".join(mapping.get("divisions", ["-"]))
-        lines.append(f"  {r['name']}")
-        lines.append(f"    Circles  : {circles}")
-        lines.append(f"    Divisions: {divisions}")
-    lines += ["", "=" * 60, "Source: IMD Nowcast Warning system"]
-    return "\n".join(lines)
-
-
-def send_alert_email(escalated: list, timestamp_human: str):
+def send_alert_email(escalated: list, reported_at_ist: str):
     if not GMAIL_FROM or not GMAIL_PASS or not EMAIL_TO:
         print("[scraper] Email env vars not set — skipping alert email")
         return
 
     recipients = [a.strip() for a in EMAIL_TO.split(",") if a.strip()]
 
-    # Subject: severity label + circle count + division count
+    # Subject: severity + district names + circle/division counts
     has_red       = any(r["warning_color"].lower() == "red" for r in escalated)
     sev_label     = "⛔ WARNING" if has_red else "🚨 ALERT"
     n_circles, n_divs = _subject_counts(escalated)
+    district_names = ", ".join(r["name"].title() for r in escalated)
     subject = (
-        f"IMD {sev_label} — "
+        f"IMD {sev_label} — {district_names} — "
         f"{n_circles} Circle{'s' if n_circles != 1 else ''}, "
         f"{n_divs} Division{'s' if n_divs != 1 else ''} Affected"
     )
@@ -686,8 +802,8 @@ def send_alert_email(escalated: list, timestamp_human: str):
     msg["Subject"] = subject
 
     alt_part = MIMEMultipart("alternative")
-    alt_part.attach(MIMEText(build_email_plain(escalated, timestamp_human), "plain"))
-    alt_part.attach(MIMEText(build_email_html(escalated,  timestamp_human), "html"))
+    alt_part.attach(MIMEText(build_email_plain(escalated, reported_at_ist), "plain"))
+    alt_part.attach(MIMEText(build_email_html(escalated,  reported_at_ist), "html"))
     msg.attach(alt_part)
 
     # Attach district + station map PNGs
@@ -720,50 +836,43 @@ def send_alert_email(escalated: list, timestamp_human: str):
 
 
 # ─────────────────────────────────────────────────────────────
-# SUPABASE — UPSERT (only changed rows)
+# SUPABASE — UPSERT ALL ROWS EVERY RUN
 # ─────────────────────────────────────────────────────────────
 
 def upsert_district_warnings(
     district_records: list,
-    prev_state: dict,
     meta: dict,
     sb: Client,
 ):
     """
-    Upsert district_warnings rows where warning_color has changed since
-    the last scan. On cold start (prev_state empty), upserts all rows.
+    Always upserts ALL 30 district rows every run.
+    This ensures the table always reflects current live IMD state,
+    including green phases — preventing false re-escalation emails
+    when a district cycles orange → green → orange.
 
-    Columns deliberately NOT written:
-        balloon_text, rain_description, thunderstorm_desc, lightning_probability
-    These are JS-rendered and unreliable — columns remain in DB untouched.
+    FIX vs previous version:
+      - Removed the 'only upsert changed rows' filter
+      - Cast state_id to int to match int4 column
     """
     rows_to_upsert = []
     for r in district_records:
-        name      = r["name"].upper()
-        new_rank  = COLOR_RANK.get(r["warning_color"].lower(), 0)
-        prev_rank = prev_state.get(name, -1)   # -1 = never seen → always upsert
-        if new_rank != prev_rank:
-            rows_to_upsert.append({
-                "scraped_at":    meta["scraped_at"],
-                "state_id":      meta["state_id"],
-                "type":          r.get("type", "district"),
-                "name":          r["name"],
-                "warning_color": r.get("warning_color", ""),
-                "severity":      r.get("severity", ""),
-                "issued_at":     r.get("issued_at") or None,
-                "valid_upto":    r.get("valid_upto") or None,
-            })
-
-    if not rows_to_upsert:
-        print("[scraper] Supabase: no color changes — 0 rows upserted")
-        return
+        rows_to_upsert.append({
+            "scraped_at":    meta["scraped_at"],
+            "state_id":      int(meta["state_id"]),   # ← FIX: int cast matches int4
+            "type":          r.get("type", "district"),
+            "name":          r["name"],
+            "warning_color": r.get("warning_color", ""),
+            "severity":      r.get("severity", ""),
+            "issued_at":     r.get("issued_at") or None,
+            "valid_upto":    r.get("valid_upto") or None,
+        })
 
     try:
         sb.table(DISTRICT_TABLE).upsert(
             rows_to_upsert,
             on_conflict="state_id,name",
         ).execute()
-        print(f"[scraper] Supabase: upserted {len(rows_to_upsert)} changed row(s) → '{DISTRICT_TABLE}'")
+        print(f"[scraper] Supabase: upserted {len(rows_to_upsert)} rows → '{DISTRICT_TABLE}'")
     except Exception as e:
         print(f"[scraper] Supabase ERROR on upsert: {e}")
 
@@ -795,9 +904,14 @@ def save_csv(filename: str, records: list, meta: dict, extra_fields: list = None
 def main():
     clean_old_files()
 
-    timestamp_human = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # IST time for email display — taken from system clock, no UTC conversion
+    reported_at_ist = ist_now_human()   # e.g. "18:33"
+
+    # UTC timestamp for database/CSV audit trail
+    scraped_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
     meta = {
-        "scraped_at": timestamp_human,
+        "scraped_at": scraped_at_utc,
         "state_id":   STATE_ID,
     }
 
@@ -843,14 +957,13 @@ def main():
     # ── Send alert email if escalation detected ───────────────
     if escalated:
         print(f"\n[scraper] {len(escalated)} TPCODL district(s) escalated — sending email...")
-        send_alert_email(escalated, timestamp_human)
+        send_alert_email(escalated, reported_at_ist)
     else:
         print("\n[scraper] No TPCODL escalations — no email sent")
 
-    # ── Upsert to Supabase (only changed rows) ────────────────
+    # ── Upsert ALL rows to Supabase every run ─────────────────
     if sb:
-        upsert_district_warnings(district_records, prev_state, meta, sb)
-        # station_warnings: not written
+        upsert_district_warnings(district_records, meta, sb)
 
     # ── Save district CSV (audit trail in git) ────────────────
     save_csv(
@@ -860,9 +973,6 @@ def main():
         extra_fields=["issued_at", "valid_upto"],
     )
     print(f"[scraper] Saved district_warnings_latest.csv ({len(district_records)} rows)")
-
-    # Station CSV: intentionally not saved — no longer needed
-    # warnings_history.jsonl: removed — Supabase is the source of truth
 
     print("\n[scraper] SUCCESS")
 
