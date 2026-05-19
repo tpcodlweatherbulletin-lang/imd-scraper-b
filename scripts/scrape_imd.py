@@ -30,10 +30,6 @@ DISTRICT_URL = (
     f"contents/districtwisewarnings_mc.php?id={STATE_ID}"
 )
 
-STATION_URL = (
-    "https://mausam.imd.gov.in/imd_latest/"
-    f"contents/stationwise-nowcast-warning_mc.php?id={STATE_ID}"
-)
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -119,6 +115,12 @@ TPCODL_MAP = {
 IMD_NAME_NORMALIZE = {
     "KENDRAPARHA": "KENDRAPARA",
 }
+
+# IMD uses 2 trailing spaces in aria-label for these districts
+TPCODL_DISTRICTS_IMD = [
+    "ANUGUL", "CUTTACK", "DHENKANAL", "JAGATSINGHPUR",
+    "KENDRAPARHA", "KHORDHA", "NAYAGARH", "PURI",
+]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -277,13 +279,86 @@ def _launch_browser(p):
     )
 
 
-def load_district_page(url: str, screenshot_name: str) -> str:
+def parse_balloon_text(text: str) -> dict:
     """
-    Load the district warnings page.
-    No balloon-click capture — those fields (rain_description etc.)
-    are JS-rendered and unreliable. We only need fill colours.
+    Parse balloon hover text from IMD district map into structured fields.
+
+    Expected format (non-green districts):
+        ANUGUL
+
+        Light rain: < 5 mm/hr
+        Light Thunderstorms with maximum surface wind speed less than 40 kmph
+        Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+
+        Time of issue: 2026-05-18
+        2037 Hrs
+        Valid upto: 2337 Hrs
+
+    Green districts:
+        CUTTACK
+
+        No Warning
+
+        Time of issue: 2026-05-18
+        1900 Hrs
+        Valid upto: 2200 Hrs
+    """
+    result = {
+        "issued_at":            "",
+        "valid_upto":           "",
+        "rain_description":     None,
+        "thunderstorm_desc":    None,
+        "lightning_probability": None,
+        "balloon_text":         text,
+    }
+
+    lines = [l.strip() for l in text.splitlines()]
+
+    # issued_at: "Time of issue: 2026-05-18" on one line, then "2037 Hrs" on next
+    for i, line in enumerate(lines):
+        if line.lower().startswith("time of issue:"):
+            date_part = line.split(":", 1)[1].strip()   # "2026-05-18"
+            # Next non-empty line should be "HHMM Hrs"
+            for j in range(i + 1, len(lines)):
+                next_l = lines[j]
+                m = re.match(r"^(\d{3,4})\s*Hrs?$", next_l, re.IGNORECASE)
+                if m:
+                    result["issued_at"] = f"{date_part} {m.group(1)}"
+                    break
+            break
+
+    # valid_upto: "Valid upto: 2337 Hrs"
+    for line in lines:
+        m = re.match(r"Valid upto:\s*(\d{3,4})\s*Hrs?", line, re.IGNORECASE)
+        if m:
+            result["valid_upto"] = m.group(1)
+            break
+
+    # weather description lines
+    for line in lines:
+        ll = line.lower()
+        if ("rain:" in ll or "mm/hr" in ll) and result["rain_description"] is None:
+            result["rain_description"] = line
+        elif ("thunderstorm" in ll or "wind speed" in ll) and result["thunderstorm_desc"] is None:
+            result["thunderstorm_desc"] = line
+        elif "lightning probability" in ll and result["lightning_probability"] is None:
+            result["lightning_probability"] = line
+
+    return result
+
+
+def load_district_page(url: str, screenshot_name: str) -> tuple[str, dict]:
+    """
+    Load the district warnings page, take a screenshot, then hover each of
+    the 8 TPCODL districts to capture balloon data.
+
+    Returns:
+        (html_content, balloon_data_by_canonical_name)
+        balloon_data keys: canonical district name (e.g. "KENDRAPARA")
+        balloon_data values: dict from parse_balloon_text()
     """
     print(f"\n[scraper] Loading district page: {url}")
+    balloon_data: dict = {}
 
     with sync_playwright() as p:
         browser = _launch_browser(p)
@@ -308,15 +383,58 @@ def load_district_page(url: str, screenshot_name: str) -> str:
         page.screenshot(path=str(screenshot_path), full_page=True)
         print(f"[scraper] Screenshot saved → {screenshot_path.name}")
 
+        # ── Balloon hover for 8 TPCODL districts ─────────────────
+        print("[scraper] Hovering TPCODL districts for balloon data...")
+        for imd_name in TPCODL_DISTRICTS_IMD:
+            # IMD appends 2 trailing spaces to aria-label
+            selector = f"path[aria-label='{imd_name}  ']"
+            try:
+                path_el = page.query_selector(selector)
+                if not path_el:
+                    print(f"[scraper]   {imd_name}: path element not found — skipping")
+                    continue
+                path_el.scroll_into_view_if_needed()
+                path_el.hover()
+                page.wait_for_timeout(800)
+
+                balloon_el = page.query_selector(".amcharts-balloon-div")
+                if balloon_el and balloon_el.is_visible():
+                    raw_text = balloon_el.inner_text().strip()
+                    parsed   = parse_balloon_text(raw_text)
+                    # Store under canonical name
+                    canonical = IMD_NAME_NORMALIZE.get(imd_name, imd_name)
+                    balloon_data[canonical] = parsed
+                    print(
+                        f"[scraper]   {canonical}: issued={parsed['issued_at']} "
+                        f"valid={parsed['valid_upto']} "
+                        f"rain={bool(parsed['rain_description'])} "
+                        f"thunder={bool(parsed['thunderstorm_desc'])} "
+                        f"lightning={bool(parsed['lightning_probability'])}"
+                    )
+                else:
+                    print(f"[scraper]   {imd_name}: balloon not visible after hover")
+            except Exception as e:
+                print(f"[scraper]   {imd_name}: hover error — {e}")
+
         html = page.content()
         browser.close()
 
-    return html
+    print(f"[scraper] Balloon data captured for {len(balloon_data)} district(s)")
+    return html, balloon_data
 
 
-def load_station_page(url: str, screenshot_name: str) -> str:
-    """Load station page — used only for issued_at / valid_upto enrichment."""
-    print(f"\n[scraper] Loading station page: {url}")
+def take_escalated_hover_screenshots(escalated_names: list) -> list[Path]:
+    """
+    Re-open the district page, hover each escalated district, and save a full-page
+    screenshot with the balloon visible. Only called when there are escalations.
+
+    Returns list of Path objects for the saved PNGs (to attach to email).
+    """
+    if not escalated_names:
+        return []
+
+    print(f"\n[scraper] Taking hover screenshots for escalated districts: {escalated_names}")
+    saved: list[Path] = []
 
     with sync_playwright() as p:
         browser = _launch_browser(p)
@@ -327,24 +445,48 @@ def load_station_page(url: str, screenshot_name: str) -> str:
         page = context.new_page()
 
         try:
-            page.goto(url, wait_until="networkidle", timeout=60000)
+            page.goto(DISTRICT_URL, wait_until="networkidle", timeout=60000)
         except PlaywrightTimeout:
-            print("[scraper] WARNING: station page load timed out — continuing")
+            print("[scraper] WARNING: district page reload timed out for hover screenshots")
 
         try:
             page.wait_for_selector("svg", timeout=20000)
             page.wait_for_timeout(5000)
         except PlaywrightTimeout:
-            print("[scraper] WARNING: SVG not detected on station page")
+            print("[scraper] WARNING: SVG not ready for hover screenshots")
 
-        screenshot_path = DATA_DIR / screenshot_name
-        page.screenshot(path=str(screenshot_path), full_page=True)
-        print(f"[scraper] Screenshot saved → {screenshot_path.name}")
+        for canonical_name in escalated_names:
+            # Convert canonical back to IMD name for the aria-label selector
+            imd_name = next(
+                (k for k, v in IMD_NAME_NORMALIZE.items() if v == canonical_name),
+                canonical_name,
+            )
+            selector = f"path[aria-label='{imd_name}  ']"
+            try:
+                path_el = page.query_selector(selector)
+                if not path_el:
+                    print(f"[scraper]   {canonical_name}: path not found for screenshot")
+                    continue
+                path_el.scroll_into_view_if_needed()
+                path_el.hover()
+                page.wait_for_timeout(800)
 
-        html = page.content()
+                balloon_el = page.query_selector(".amcharts-balloon-div")
+                if not (balloon_el and balloon_el.is_visible()):
+                    print(f"[scraper]   {canonical_name}: balloon not visible — skipping screenshot")
+                    continue
+
+                fname = DATA_DIR / f"district_hover_{canonical_name.lower()}_{STATE_ID}.png"
+                page.screenshot(path=str(fname), full_page=True)
+                saved.append(fname)
+                print(f"[scraper]   Saved hover screenshot → {fname.name}")
+
+            except Exception as e:
+                print(f"[scraper]   {canonical_name}: hover screenshot error — {e}")
+
         browser.close()
 
-    return html
+    return saved
 
 
 # ─────────────────────────────────────────────────────────────
@@ -354,115 +496,90 @@ def load_station_page(url: str, screenshot_name: str) -> str:
 def extract_district_records(html: str) -> list:
     """
     Extract district warning records from the SVG map HTML.
+    Scoped to only the 8 TPCODL districts — non-TPCODL districts are ignored.
     Only extracts: name, warning_color, severity.
-    issued_at / valid_upto are filled later by enrich_district_issued_at().
-    Applies IMD_NAME_NORMALIZE to fix known name mismatches.
+    issued_at / valid_upto + weather fields are filled later by enrich_district_from_balloons().
+    Applies IMD_NAME_NORMALIZE to fix known name mismatches (e.g. KENDRAPARHA → KENDRAPARA).
     """
     soup    = BeautifulSoup(html, "html.parser")
     records = []
     seen    = set()
 
-    def _make_record(label: str, fill: str) -> dict:
-        raw_name  = label.strip()
-        # Normalize known IMD name mismatches
-        name      = IMD_NAME_NORMALIZE.get(raw_name.upper(), raw_name.upper())
+    # Canonical names we care about (8 TPCODL districts)
+    TPCODL_CANONICAL = set(TPCODL_MAP.keys())
+
+    def _make_record(label: str, fill: str) -> dict | None:
+        raw_name  = label.strip().upper()
+        canonical = IMD_NAME_NORMALIZE.get(raw_name, raw_name)
+        if canonical not in TPCODL_CANONICAL:
+            return None                         # skip non-TPCODL district
         hex_color = normalize_color(fill)
         return {
-            "type":          "district",
-            "name":          name,
-            "warning_color": hex_to_color_name(hex_color),
-            "severity":      color_to_severity(fill),
-            "issued_at":     "",
-            "valid_upto":    "",
+            "type":                  "district",
+            "name":                  canonical,
+            "warning_color":         hex_to_color_name(hex_color),
+            "severity":              color_to_severity(fill),
+            "issued_at":             "",
+            "valid_upto":            "",
+            "balloon_text":          None,
+            "rain_description":      None,
+            "thunderstorm_desc":     None,
+            "lightning_probability": None,
         }
 
     # Primary: amcharts-map-area SVG paths
     for path in soup.select("svg path.amcharts-map-area"):
         label = (path.get("aria-label") or "").strip()
         fill  = (path.get("fill") or "").strip()
-        if label and fill and label.upper() not in seen:
-            seen.add(label.upper())
-            records.append(_make_record(label, fill))
+        canonical = IMD_NAME_NORMALIZE.get(label.upper(), label.upper())
+        if label and fill and canonical not in seen:
+            rec = _make_record(label, fill)
+            if rec:
+                seen.add(canonical)
+                records.append(rec)
 
     # Fallback: any SVG path with aria-label + fill
     if not records:
         for path in soup.select("svg path"):
             label = (path.get("aria-label") or path.get("title") or "").strip()
             fill  = (path.get("fill") or path.get("stroke") or "").strip()
-            if label and fill and label.upper() not in seen:
-                seen.add(label.upper())
-                records.append(_make_record(label, fill))
+            canonical = IMD_NAME_NORMALIZE.get(label.upper(), label.upper())
+            if label and fill and canonical not in seen:
+                rec = _make_record(label, fill)
+                if rec:
+                    seen.add(canonical)
+                    records.append(rec)
 
-    print(f"[scraper] District records extracted: {len(records)}")
+    print(f"[scraper] TPCODL district records extracted: {len(records)}/8")
     return records
 
 
 # ─────────────────────────────────────────────────────────────
-# EXTRACTION — STATIONS  (for time enrichment only)
+# ENRICH DISTRICTS with balloon hover data (issued_at, valid_upto,
+# rain_description, thunderstorm_desc, lightning_probability)
 # ─────────────────────────────────────────────────────────────
 
-def extract_station_records(html: str) -> list:
+def enrich_district_from_balloons(district_records: list, balloon_data: dict) -> list:
     """
-    Extract station records. Used ONLY to derive consensus issued_at / valid_upto
-    for district enrichment. Station records are NOT uploaded to Supabase.
+    Apply balloon-extracted data directly to the 8 TPCODL district records.
+    Since district_records is now scoped to TPCODL only, every record should
+    have a matching balloon entry. Missing entries leave times empty.
     """
-    soup    = BeautifulSoup(html, "html.parser")
-    records = []
-    seen    = set()
-
-    TEXT_TO_COLOR = {
-        "No Warning": "#008000",
-        "Watch":      "#ffff00",
-        "Alert":      "#ffa500",
-        "Warning":    "#ff0000",
-    }
-
-    for img_el in soup.select("svg image.amcharts-map-image"):
-        href   = (img_el.get("xlink:href") or img_el.get("href") or "").strip()
-        parent = img_el.parent
-        aria   = (parent.get("aria-label") or "").strip() if parent else ""
-        if not aria:
-            continue
-        parsed = parse_station_aria_label(aria)
-        name   = parsed["name"]
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        color_hex = marker_filename_to_color(href)
-        if not color_hex:
-            color_hex = TEXT_TO_COLOR.get(parsed["warning_text"], "")
-        records.append({
-            "name":      name,
-            "issued_at": parsed["issued_at"],
-            "valid_upto": parsed["valid_upto"],
-        })
-
-    print(f"[scraper] Station records extracted: {len(records)} (time enrichment only)")
-    return records
-
-
-# ─────────────────────────────────────────────────────────────
-# ENRICH DISTRICTS with consensus issued_at / valid_upto
-# ─────────────────────────────────────────────────────────────
-
-def enrich_district_issued_at(district_records: list, station_records: list) -> list:
-    issued_vals = [r["issued_at"]  for r in station_records if r.get("issued_at")]
-    valid_vals  = [r["valid_upto"] for r in station_records if r.get("valid_upto")]
-
-    if not issued_vals:
-        print("[scraper] No station issued_at found — district time columns stay empty")
-        return district_records
-
-    common_issued = Counter(issued_vals).most_common(1)[0][0]
-    common_valid  = Counter(valid_vals).most_common(1)[0][0] if valid_vals else ""
-    print(f"[scraper] Station consensus → issued_at={common_issued}  valid_upto={common_valid}")
-
     for r in district_records:
-        if not r.get("issued_at"):
-            r["issued_at"] = common_issued
-        if not r.get("valid_upto"):
-            r["valid_upto"] = common_valid
+        name = r["name"].upper()
+        b    = balloon_data.get(name)
+        if b:
+            r["issued_at"]             = b.get("issued_at", "")
+            r["valid_upto"]            = b.get("valid_upto", "")
+            r["balloon_text"]          = b.get("balloon_text")
+            r["rain_description"]      = b.get("rain_description")
+            r["thunderstorm_desc"]     = b.get("thunderstorm_desc")
+            r["lightning_probability"] = b.get("lightning_probability")
+        else:
+            print(f"[scraper]   WARNING: no balloon data for {name} — times will be empty")
 
+    enriched = sum(1 for r in district_records if r.get("issued_at"))
+    print(f"[scraper] Balloon enrichment: {enriched}/{len(district_records)} districts have times")
     return district_records
 
 
@@ -559,16 +676,37 @@ def _build_district_table(escalated: list) -> str:
         badge = _badge(r["warning_color"], r["severity"])
         issued_display = extract_time_only(r.get("issued_at", ""))
         valid_display  = format_valid_upto(r.get("valid_upto", ""))
+
+        # Weather detail sub-row (rain / thunderstorm / lightning)
+        weather_parts = []
+        if r.get("rain_description"):
+            weather_parts.append(f"🌧 {r['rain_description']}")
+        if r.get("thunderstorm_desc"):
+            weather_parts.append(f"⛈ {r['thunderstorm_desc']}")
+        if r.get("lightning_probability"):
+            weather_parts.append(f"⚡ {r['lightning_probability']}")
+
+        weather_html = ""
+        if weather_parts:
+            items = "".join(
+                f"<li style='margin-bottom:3px;'>{w}</li>" for w in weather_parts
+            )
+            weather_html = (
+                f"<ul style='margin:4px 0 0;padding-left:16px;"
+                f"font-size:11px;color:#555;line-height:1.4;'>{items}</ul>"
+            )
+
         rows += (
             f"<tr>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-weight:600;font-size:13px;'>{r['name'].title()}</td>"
+            f"font-weight:600;font-size:13px;vertical-align:top;'>"
+            f"{r['name'].title()}{weather_html}</td>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"text-align:center;'>{badge}</td>"
+            f"text-align:center;vertical-align:top;'>{badge}</td>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;'>{issued_display} Hrs</td>"
+            f"font-size:12px;color:#555;vertical-align:top;'>{issued_display} Hrs</td>"
             f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;'>{valid_display} Hrs</td>"
+            f"font-size:12px;color:#555;vertical-align:top;'>{valid_display} Hrs</td>"
             f"</tr>"
         )
     return f"""
@@ -692,6 +830,12 @@ def build_email_plain(escalated: list, reported_at_ist: str) -> str:
             f"  {r['name']}  |  {r['severity'].upper()}  ({r['warning_color']})"
             f"  |  Issued: {issued} Hrs  Valid upto: {valid} Hrs"
         )
+        if r.get("rain_description"):
+            lines.append(f"    🌧 {r['rain_description']}")
+        if r.get("thunderstorm_desc"):
+            lines.append(f"    ⛈ {r['thunderstorm_desc']}")
+        if r.get("lightning_probability"):
+            lines.append(f"    ⚡ {r['lightning_probability']}")
     lines += [
         "",
         "KALABAISAKHI TIMING SUMMARY",
@@ -769,7 +913,7 @@ def build_email_html(escalated: list, reported_at_ist: str) -> str:
       <p style="font-size:11px;color:#999;margin:0;line-height:1.6;">
         Source: IMD Nowcast Warning system &nbsp;|&nbsp;
         Auto-scraped by GitHub Actions (15-min interval)<br>
-        Attachments: district map PNG &bull; station map PNG<br>
+        Attachments: district overview map &bull; per-district balloon hover PNG(s)<br>
         Email triggered on severity escalation to orange/red only.
       </p>
     </div>
@@ -778,7 +922,7 @@ def build_email_html(escalated: list, reported_at_ist: str) -> str:
 </html>"""
 
 
-def send_alert_email(escalated: list, reported_at_ist: str):
+def send_alert_email(escalated: list, reported_at_ist: str, hover_pngs: list[Path] = None):
     if not GMAIL_FROM or not GMAIL_PASS or not EMAIL_TO:
         print("[scraper] Email env vars not set — skipping alert email")
         return
@@ -806,11 +950,9 @@ def send_alert_email(escalated: list, reported_at_ist: str):
     alt_part.attach(MIMEText(build_email_html(escalated,  reported_at_ist), "html"))
     msg.attach(alt_part)
 
-    # Attach district + station map PNGs
-    for attach_path in [
-        DATA_DIR / f"district_warning_{STATE_ID}.png",
-        DATA_DIR / f"station_warning_{STATE_ID}.png",
-    ]:
+    # Attachments: district overview PNG + per-escalated-district hover PNGs
+    attach_paths = [DATA_DIR / f"district_warning_{STATE_ID}.png"] + (hover_pngs or [])
+    for attach_path in attach_paths:
         if not attach_path.exists():
             print(f"[scraper] Attachment not found (skipping): {attach_path.name}")
             continue
@@ -857,14 +999,18 @@ def upsert_district_warnings(
     rows_to_upsert = []
     for r in district_records:
         rows_to_upsert.append({
-            "scraped_at":    meta["scraped_at"],
-            "state_id":      int(meta["state_id"]),   # ← FIX: int cast matches int4
-            "type":          r.get("type", "district"),
-            "name":          r["name"],
-            "warning_color": r.get("warning_color", ""),
-            "severity":      r.get("severity", ""),
-            "issued_at":     r.get("issued_at") or None,
-            "valid_upto":    r.get("valid_upto") or None,
+            "scraped_at":             meta["scraped_at"],
+            "state_id":               int(meta["state_id"]),   # ← FIX: int cast matches int4
+            "type":                   r.get("type", "district"),
+            "name":                   r["name"],
+            "warning_color":          r.get("warning_color", ""),
+            "severity":               r.get("severity", ""),
+            "issued_at":              r.get("issued_at") or None,
+            "valid_upto":             r.get("valid_upto") or None,
+            "balloon_text":           r.get("balloon_text") or None,
+            "rain_description":       r.get("rain_description") or None,
+            "thunderstorm_desc":      r.get("thunderstorm_desc") or None,
+            "lightning_probability":  r.get("lightning_probability") or None,
         })
 
     try:
@@ -915,19 +1061,14 @@ def main():
         "state_id":   STATE_ID,
     }
 
-    # ── DISTRICT PAGE ─────────────────────────────────────────
-    district_html    = load_district_page(DISTRICT_URL, f"district_warning_{STATE_ID}.png")
+    # ── DISTRICT PAGE + BALLOON HOVER ────────────────────────
+    district_html, balloon_data = load_district_page(DISTRICT_URL, f"district_warning_{STATE_ID}.png")
     district_records = extract_district_records(district_html)
 
-    # ── STATION PAGE (time enrichment only) ───────────────────
-    station_html    = load_station_page(STATION_URL, f"station_warning_{STATE_ID}.png")
-    station_records = extract_station_records(station_html)
-
-    # ── Enrich districts with consensus issued_at / valid_upto ─
-    district_records = enrich_district_issued_at(district_records, station_records)
+    # ── Enrich districts with balloon-extracted times + weather data ─
+    district_records = enrich_district_from_balloons(district_records, balloon_data)
 
     print(f"\n[scraper] District : {len(district_records)} records")
-    print(f"[scraper] Station  : {len(station_records)} records (time enrichment only, not uploaded)")
 
     if not district_records:
         print("\n[scraper] ERROR: no district data extracted — aborting")
@@ -957,7 +1098,10 @@ def main():
     # ── Send alert email if escalation detected ───────────────
     if escalated:
         print(f"\n[scraper] {len(escalated)} TPCODL district(s) escalated — sending email...")
-        send_alert_email(escalated, reported_at_ist)
+        # Take hover screenshots only for escalated (orange/red) districts
+        escalated_names = [r["name"].upper() for r in escalated]
+        hover_pngs = take_escalated_hover_screenshots(escalated_names)
+        send_alert_email(escalated, reported_at_ist, hover_pngs)
     else:
         print("\n[scraper] No TPCODL escalations — no email sent")
 
@@ -970,7 +1114,7 @@ def main():
         "district_warnings_latest.csv",
         district_records,
         meta,
-        extra_fields=["issued_at", "valid_upto"],
+        extra_fields=["issued_at", "valid_upto", "rain_description", "thunderstorm_desc", "lightning_probability"],
     )
     print(f"[scraper] Saved district_warnings_latest.csv ({len(district_records)} rows)")
 
