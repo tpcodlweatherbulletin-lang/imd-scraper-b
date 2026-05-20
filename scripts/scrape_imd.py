@@ -10,7 +10,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 from pathlib import Path
 from collections import Counter
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
@@ -671,52 +671,119 @@ def _badge(color: str, label: str) -> str:
 
 
 def _build_district_table(escalated: list) -> str:
+    """Table 1: District, Severity, Issued At, Valid Upto — clean, no weather details."""
     rows = ""
     for r in escalated:
-        badge = _badge(r["warning_color"], r["severity"])
+        badge          = _badge(r["warning_color"], r["severity"])
         issued_display = extract_time_only(r.get("issued_at", ""))
         valid_display  = format_valid_upto(r.get("valid_upto", ""))
-
-        # Weather detail sub-row (rain / thunderstorm / lightning)
-        weather_parts = []
-        if r.get("rain_description"):
-            weather_parts.append(f"🌧 {r['rain_description']}")
-        if r.get("thunderstorm_desc"):
-            weather_parts.append(f"⛈ {r['thunderstorm_desc']}")
-        if r.get("lightning_probability"):
-            weather_parts.append(f"⚡ {r['lightning_probability']}")
-
-        weather_html = ""
-        if weather_parts:
-            items = "".join(
-                f"<li style='margin-bottom:3px;'>{w}</li>" for w in weather_parts
-            )
-            weather_html = (
-                f"<ul style='margin:4px 0 0;padding-left:16px;"
-                f"font-size:11px;color:#555;line-height:1.4;'>{items}</ul>"
-            )
-
         rows += (
             f"<tr>"
-            f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-weight:600;font-size:13px;vertical-align:top;'>"
-            f"{r['name'].title()}{weather_html}</td>"
-            f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"text-align:center;vertical-align:top;'>{badge}</td>"
-            f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;vertical-align:top;'>{issued_display} Hrs</td>"
-            f"<td style='padding:7px 12px;border-bottom:1px solid #e8e8e8;"
-            f"font-size:12px;color:#555;vertical-align:top;'>{valid_display} Hrs</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-weight:700;font-size:13px;color:#1B3A6B;'>"
+            f"<span style='display:inline-block;width:8px;height:8px;border-radius:50%;"
+            f"background:#e07000;margin-right:7px;vertical-align:middle;'></span>"
+            f"{r['name'].title()}</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"text-align:center;'>{badge}</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-size:13px;color:#444;text-align:center;'>{issued_display} Hrs</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-size:13px;color:#444;text-align:center;'>{valid_display} Hrs</td>"
             f"</tr>"
         )
     return f"""
-    <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;">
+    <table style="border-collapse:collapse;width:100%;font-family:'Segoe UI',Arial,sans-serif;
+                  border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
       <thead>
         <tr style="background:#1B3A6B;color:#fff;">
-          <th style="padding:8px 12px;text-align:left;font-size:13px;">District</th>
-          <th style="padding:8px 12px;font-size:13px;">Severity</th>
-          <th style="padding:8px 12px;text-align:left;font-size:13px;">Issued At</th>
-          <th style="padding:8px 12px;text-align:left;font-size:13px;">Valid Upto</th>
+          <th style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">District</th>
+          <th style="padding:10px 14px;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">Severity</th>
+          <th style="padding:10px 14px;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">Issued At</th>
+          <th style="padding:10px 14px;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">Valid Upto</th>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>"""
+
+
+def _build_weather_table(escalated: list) -> str:
+    """
+    Table 3 (new): District Weather Details — Rain, Wind Speed, Lightning Probability.
+    Only included for districts that have at least one weather field populated.
+    """
+    # Filter to districts that actually have weather data
+    weather_rows = [
+        r for r in escalated
+        if r.get("rain_description") or r.get("thunderstorm_desc") or r.get("lightning_probability")
+    ]
+    if not weather_rows:
+        return ""
+
+    WEATHER_ICON = {
+        "rain":        "🌧",
+        "thunderstorm": "⛈",
+        "lightning":   "⚡",
+    }
+
+    rows = ""
+    for r in weather_rows:
+        rain   = r.get("rain_description")     or "—"
+        thunder = r.get("thunderstorm_desc")   or "—"
+        light  = r.get("lightning_probability") or "—"
+
+        # Extract just the key figure from each field for cleaner display
+        # e.g. "Moderate rain: 5-15 mm/hr" → keep as-is but strip leading label
+        def _clean(text: str) -> str:
+            if text == "—":
+                return text
+            # Remove duplicate prefix patterns like "Light rain: " keeping rest
+            for prefix in ["Light rain:", "Moderate rain:", "Heavy rain:",
+                            "Very heavy rain:", "Extremely heavy rain:"]:
+                if text.lower().startswith(prefix.lower()):
+                    return text[len(prefix):].strip()
+            return text
+
+        rain_clean    = _clean(rain)
+        thunder_clean = _clean(thunder)
+        light_clean   = _clean(light)
+
+        rows += (
+            f"<tr>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-weight:700;font-size:13px;color:#1B3A6B;vertical-align:top;'>"
+            f"<span style='display:inline-block;width:8px;height:8px;border-radius:50%;"
+            f"background:#e07000;margin-right:7px;vertical-align:middle;'></span>"
+            f"{r['name'].title()}</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-size:12px;color:#333;vertical-align:top;'>"
+            f"{WEATHER_ICON['rain']} {rain_clean}</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-size:12px;color:#333;vertical-align:top;'>"
+            f"{WEATHER_ICON['thunderstorm']} {thunder_clean}</td>"
+            f"<td style='padding:10px 14px;border-bottom:1px solid #eef0f4;"
+            f"font-size:12px;color:#333;vertical-align:top;'>"
+            f"{WEATHER_ICON['lightning']} {light_clean}</td>"
+            f"</tr>"
+        )
+
+    return f"""
+    <table style="border-collapse:collapse;width:100%;font-family:'Segoe UI',Arial,sans-serif;
+                  border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+      <thead>
+        <tr style="background:#2a5298;color:#fff;">
+          <th style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">District</th>
+          <th style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">🌧 Rainfall</th>
+          <th style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">⛈ Wind / Thunderstorm</th>
+          <th style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;
+                     letter-spacing:.5px;text-transform:uppercase;">⚡ Lightning Risk</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -759,27 +826,48 @@ def _build_ops_table(escalated: list) -> str:
 
 def _build_kalabaisakhi_summary(escalated: list) -> str:
     """
-    Build bullet-point Kalabaisakhi summary lines after the district table.
-    One line per escalated district:
-      • Start time of KALABAISAKHI : 16:00 Hrs and expected stop time is 19:00 Hrs
-        in Nayagarh District and associated Divisions (NYED, NAYAGARH; KHED, KHORDHA).
+    Kalabaisakhi timing cards — one card per escalated district.
+    Shows narrative text on left, start/end times on right (inspired by reference design).
     """
-    lines = []
+    cards = []
     for r in escalated:
         name      = r["name"].upper()
         mapping   = TPCODL_MAP.get(name, {})
         divisions = ", ".join(mapping.get("divisions", ["-"]))
         issued    = extract_time_only(r.get("issued_at", ""))
         valid     = format_valid_upto(r.get("valid_upto", ""))
-        lines.append(
-            f"<li style='margin-bottom:6px;font-size:13px;color:#333;'>"
-            f"Start time of <strong>KALABAISAKHI</strong> : <strong>{issued} Hrs</strong> "
-            f"and expected stop time is <strong>{valid} Hrs</strong> "
-            f"in <strong>{r['name'].title()} District</strong> "
-            f"and associated Divisions ({divisions})."
-            f"</li>"
-        )
-    return "<ul style='padding-left:20px;margin:8px 0 0;'>" + "".join(lines) + "</ul>"
+        cards.append(f"""
+        <div style="display:table;width:100%;border-collapse:collapse;margin-bottom:8px;">
+          <div style="display:table-row;">
+            <div style="display:table-cell;vertical-align:middle;padding:2px 16px 2px 0;width:65%;">
+              <span style="font-size:13px;color:#5a3800;line-height:1.6;">
+                Start time of <strong>KALABAISAKHI</strong> : <strong>{issued} Hrs</strong>
+                and expected stop time is <strong>{valid} Hrs</strong>
+                in <strong>{r['name'].title()} District</strong>
+                and associated Divisions ({divisions}).
+              </span>
+            </div>
+            <div style="display:table-cell;vertical-align:middle;padding:2px 0;width:35%;">
+              <table style="border-collapse:collapse;width:100%;">
+                <tr>
+                  <td style="padding:4px 10px;border-bottom:1px dashed #e0c070;">
+                    <span style="font-size:10px;color:#8a6000;text-transform:uppercase;
+                                 letter-spacing:.4px;">Start Time</span><br>
+                    <strong style="font-size:16px;color:#c05000;">{issued} Hrs</strong>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 10px;">
+                    <span style="font-size:10px;color:#8a6000;text-transform:uppercase;
+                                 letter-spacing:.4px;">Expected End Time</span><br>
+                    <strong style="font-size:16px;color:#c05000;">{valid} Hrs</strong>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </div>
+        </div>""")
+    return "".join(cards)
 
 
 def _build_kalabaisakhi_summary_plain(escalated: list) -> str:
@@ -817,7 +905,7 @@ def build_email_plain(escalated: list, reported_at_ist: str) -> str:
     kalabaisakhi_plain = _build_kalabaisakhi_summary_plain(escalated)
     lines = [
         "IMD TPCODL WARNING ALERT",
-        f"Reported at: {reported_at_ist} Hrs",
+        f"Reported at: {reported_at_ist} Hrs (IST)",
         "=" * 60,
         "",
         "DISTRICT WARNING STATUS",
@@ -830,17 +918,25 @@ def build_email_plain(escalated: list, reported_at_ist: str) -> str:
             f"  {r['name']}  |  {r['severity'].upper()}  ({r['warning_color']})"
             f"  |  Issued: {issued} Hrs  Valid upto: {valid} Hrs"
         )
-        if r.get("rain_description"):
-            lines.append(f"    🌧 {r['rain_description']}")
-        if r.get("thunderstorm_desc"):
-            lines.append(f"    ⛈ {r['thunderstorm_desc']}")
-        if r.get("lightning_probability"):
-            lines.append(f"    ⚡ {r['lightning_probability']}")
     lines += [
         "",
         "KALABAISAKHI TIMING SUMMARY",
         "-" * 40,
         kalabaisakhi_plain,
+        "",
+        "DISTRICT WEATHER DETAILS",
+        "-" * 40,
+    ]
+    for r in escalated:
+        if r.get("rain_description") or r.get("thunderstorm_desc") or r.get("lightning_probability"):
+            lines.append(f"  {r['name']}")
+            if r.get("rain_description"):
+                lines.append(f"    🌧 Rain     : {r['rain_description']}")
+            if r.get("thunderstorm_desc"):
+                lines.append(f"    ⛈ Wind/Storm: {r['thunderstorm_desc']}")
+            if r.get("lightning_probability"):
+                lines.append(f"    ⚡ Lightning : {r['lightning_probability']}")
+    lines += [
         "",
         "AFFECTED TPCODL CIRCLES & DIVISIONS",
         "-" * 40,
@@ -858,64 +954,169 @@ def build_email_plain(escalated: list, reported_at_ist: str) -> str:
 
 
 def build_email_html(escalated: list, reported_at_ist: str) -> str:
-    # Determine highest severity label for header colour
-    has_red    = any(r["warning_color"].lower() == "red"    for r in escalated)
-    header_bg  = "#cc0000" if has_red else "#e07000"
-    sev_label  = "⛔ WARNING" if has_red else "🚨 ALERT"
+    has_red     = any(r["warning_color"].lower() == "red"    for r in escalated)
+    header_bg   = "#cc0000" if has_red else "#e07000"
+    sev_label   = "WARNING" if has_red else "ALERT"
+    sev_emoji   = "⛔" if has_red else "🚨"
+    alert_badge_bg = "#cc0000" if has_red else "#e07000"
 
-    district_table       = _build_district_table(escalated)
-    kalabaisakhi_summary = _build_kalabaisakhi_summary(escalated)
-    ops_table            = _build_ops_table(escalated)
+    district_table   = _build_district_table(escalated)
+    weather_table    = _build_weather_table(escalated)
+    kala_summary     = _build_kalabaisakhi_summary(escalated)
+    ops_table        = _build_ops_table(escalated)
 
-    district_names = ", ".join(r["name"].title() for r in escalated)
+    district_names   = ", ".join(r["name"].title() for r in escalated)
+    n_districts      = len(escalated)
+
+    # ── Weather summary stat cards (top of email, like reference image) ──────
+    # Aggregate: take first escalated district that has data for each field
+    first_weather = next((r for r in escalated if r.get("rain_description")), None)
+    stat_cards = ""
+    if first_weather:
+        rain_val    = first_weather.get("rain_description",     "") or ""
+        thunder_val = first_weather.get("thunderstorm_desc",    "") or ""
+        light_val   = first_weather.get("lightning_probability","") or ""
+
+        def _stat_card(icon, label, value, color):
+            return f"""
+            <td style="padding:0 8px;text-align:center;vertical-align:top;width:25%;">
+              <div style="background:#fff;border-radius:8px;padding:12px 8px;
+                          border-top:3px solid {color};box-shadow:0 1px 4px rgba(0,0,0,.07);">
+                <div style="font-size:22px;margin-bottom:4px;">{icon}</div>
+                <div style="font-size:10px;color:{color};font-weight:700;
+                            text-transform:uppercase;letter-spacing:.5px;">{label}</div>
+                <div style="font-size:12px;color:#333;margin-top:4px;line-height:1.4;">{value}</div>
+              </div>
+            </td>"""
+
+        # extract valid_upto from first escalated district for the "Valid Till" card
+        valid_display = format_valid_upto(escalated[0].get("valid_upto",""))
+        today_str = date.today().strftime("%-d %b %Y")
+
+        stat_cards = f"""
+      <div style="margin-bottom:20px;">
+        <table style="border-collapse:separate;border-spacing:0;width:100%;">
+          <tr>
+            {_stat_card("🌧","Rainfall", rain_val or "—", "#1a7abf")}
+            {_stat_card("⛈","Wind / Storm", thunder_val or "—", "#e07000")}
+            {_stat_card("⚡","Lightning Risk", light_val or "—", "#e07000")}
+            {_stat_card("🕐","Valid Till", f"<strong style='font-size:15px;'>{valid_display} Hrs</strong><br><span style='font-size:10px;color:#888;'>{today_str}</span>", "#555")}
+          </tr>
+        </table>
+      </div>"""
+
+    weather_section = ""
+    if weather_table:
+        weather_section = f"""
+      <h3 style="margin:24px 0 10px;color:#1B3A6B;font-size:13px;font-weight:700;
+                 letter-spacing:.5px;text-transform:uppercase;
+                 display:flex;align-items:center;gap:6px;">
+        <span style="display:inline-block;width:3px;height:14px;background:#e07000;
+                     border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
+        DISTRICT WEATHER DETAILS
+      </h3>
+      {weather_table}"""
 
     return f"""<!DOCTYPE html>
 <html>
-<body style="font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:0;">
-  <div style="max-width:760px;margin:24px auto;background:#fff;border-radius:8px;
-              box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden;">
+<body style="font-family:'Segoe UI',Arial,sans-serif;background:#f0f2f7;margin:0;padding:0;">
+  <div style="max-width:780px;margin:24px auto;background:#fff;border-radius:10px;
+              box-shadow:0 4px 16px rgba(0,0,0,.10);overflow:hidden;">
 
     <!-- Header -->
-    <div style="background:{header_bg};padding:20px 28px;">
-      <h2 style="margin:0;color:#fff;font-size:18px;">
-        {sev_label} — IMD Nowcast Warning (TPCODL)
-      </h2>
-      <p style="margin:6px 0 0;color:rgba(255,255,255,.85);font-size:12px;">
-        Reported at {reported_at_ist} Hrs (IST) &nbsp;|&nbsp; Districts: {district_names}
-      </p>
+    <div style="background:{header_bg};padding:22px 28px;position:relative;">
+      <table style="border-collapse:collapse;width:100%;">
+        <tr>
+          <td style="vertical-align:middle;">
+            <div style="font-size:11px;color:rgba(255,255,255,.7);
+                        text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">
+              {sev_emoji} IMD Nowcast Warning (TPCODL)
+            </div>
+            <div style="font-size:20px;font-weight:700;color:#fff;line-height:1.2;">
+              {sev_label} — IMD Nowcast Warning (TPCODL)
+            </div>
+            <div style="margin-top:8px;font-size:12px;color:rgba(255,255,255,.85);">
+              <span>📍 District{'s' if n_districts > 1 else ''}: {district_names}</span>
+              &nbsp;&nbsp;
+              <span>🕐 Reported at: {reported_at_ist} Hrs (IST)</span>
+            </div>
+          </td>
+          <td style="vertical-align:middle;text-align:right;padding-left:16px;white-space:nowrap;">
+            <div style="display:inline-block;background:rgba(255,255,255,.2);
+                        border:2px solid rgba(255,255,255,.6);border-radius:8px;
+                        padding:8px 14px;text-align:center;">
+              <div style="font-size:9px;color:rgba(255,255,255,.8);
+                          text-transform:uppercase;letter-spacing:.6px;">⚠</div>
+              <div style="font-size:13px;font-weight:800;color:#fff;
+                          letter-spacing:.5px;">{sev_label}</div>
+            </div>
+          </td>
+        </tr>
+      </table>
     </div>
 
-    <div style="padding:24px 28px;">
+    <div style="padding:24px 28px;background:#f8f9fc;">
+
+      <!-- Stat Cards -->
+      {stat_cards}
 
       <!-- Table 1: District Warning Status -->
-      <h3 style="margin:0 0 10px;color:#1B3A6B;font-size:14px;letter-spacing:.3px;">
+      <h3 style="margin:0 0 10px;color:#1B3A6B;font-size:13px;font-weight:700;
+                 letter-spacing:.5px;text-transform:uppercase;">
+        <span style="display:inline-block;width:3px;height:14px;background:#1B3A6B;
+                     border-radius:2px;margin-right:8px;vertical-align:middle;"></span>
         DISTRICT WARNING STATUS
       </h3>
       {district_table}
 
-      <!-- Kalabaisakhi Timing Summary -->
-      <div style="margin-top:16px;padding:12px 16px;background:#fff8e1;
-                  border-left:4px solid #e07000;border-radius:4px;">
-        <p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#1B3A6B;">
-          KALABAISAKHI TIMING SUMMARY
-        </p>
-        {kalabaisakhi_summary}
+      <!-- Kalabaisakhi Box -->
+      <div style="margin-top:20px;padding:16px 18px;background:#fffbee;
+                  border:1px solid #f0d060;border-left:4px solid #e07000;border-radius:6px;">
+        <div style="font-size:12px;font-weight:700;color:#8a5000;
+                    text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">
+          🕐 KALABAISAKHI TIMING SUMMARY
+        </div>
+        {kala_summary}
       </div>
 
-      <!-- Table 2: Circles & Divisions -->
-      <h3 style="margin:24px 0 10px;color:#1B3A6B;font-size:14px;letter-spacing:.3px;">
+      <!-- Table 3: District Weather Details (new) -->
+      {weather_section}
+
+      <!-- Table 2: Affected Circles & Divisions -->
+      <h3 style="margin:24px 0 10px;color:#1B3A6B;font-size:13px;font-weight:700;
+                 letter-spacing:.5px;text-transform:uppercase;">
+        <span style="display:inline-block;width:3px;height:14px;background:#1B3A6B;
+                     border-radius:2px;margin-right:8px;vertical-align:middle;"></span>
         AFFECTED TPCODL CIRCLES &amp; DIVISIONS
       </h3>
       {ops_table}
 
       <!-- Footer -->
-      <hr style="margin:28px 0 16px;border:none;border-top:1px solid #eee;">
-      <p style="font-size:11px;color:#999;margin:0;line-height:1.6;">
-        Source: IMD Nowcast Warning system &nbsp;|&nbsp;
-        Auto-scraped by GitHub Actions (15-min interval)<br>
-        Attachments: district overview map &bull; per-district balloon hover PNG(s)<br>
-        Email triggered on severity escalation to orange/red only.
-      </p>
+      <div style="margin-top:28px;padding-top:16px;border-top:1px solid #e4e8f0;">
+        <table style="border-collapse:collapse;width:100%;">
+          <tr>
+            <td style="vertical-align:top;padding:0 12px 0 0;width:33%;font-size:11px;color:#888;">
+              <div style="font-weight:600;color:#555;margin-bottom:3px;">📄 Source</div>
+              IMD Nowcast Warning system
+            </td>
+            <td style="vertical-align:top;padding:0 12px;width:33%;font-size:11px;color:#888;
+                       border-left:1px solid #eee;border-right:1px solid #eee;">
+              <div style="font-weight:600;color:#555;margin-bottom:3px;">🔄 Auto-updated</div>
+              Every 15 min via GitHub Actions
+            </td>
+            <td style="vertical-align:top;padding:0 0 0 12px;width:33%;font-size:11px;color:#888;">
+              <div style="font-weight:600;color:#555;margin-bottom:3px;">📢 Generated on</div>
+              Alert / Warning raised by IMD
+            </td>
+          </tr>
+        </table>
+        <div style="margin-top:12px;font-size:10px;color:#bbb;text-align:center;">
+          Generated At: {reported_at_ist} IST &nbsp;|&nbsp;
+          Next Refresh: ~15 min &nbsp;|&nbsp;
+          Email triggered on escalation to orange/red only
+        </div>
+      </div>
+
     </div>
   </div>
 </body>
