@@ -1,9 +1,9 @@
 scraped_at,state_id,type,name,warning_color,severity,issued_at,valid_upto,rain_description,thunderstorm_desc,lightning_probability
-2026-05-21 15:48 UTC,10,district,ANUGUL,green,No Warning,2026-05-21 2041,2200,,,
-2026-05-21 15:48 UTC,10,district,CUTTACK,green,No Warning,2026-05-21 2041,2200,,,
-2026-05-21 15:48 UTC,10,district,DHENKANAL,green,No Warning,2026-05-21 2041,2200,,,
-2026-05-21 15:48 UTC,10,district,JAGATSINGHPUR,green,No Warning,2026-05-21 2041,2200,,,
-2026-05-21 15:48 UTC,10,district,KENDRAPARA,green,No Warning,2026-05-21 2041,2200,,,
-2026-05-21 15:48 UTC,10,district,KHORDHA,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
-2026-05-21 15:48 UTC,10,district,NAYAGARH,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
-2026-05-21 15:48 UTC,10,district,PURI,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-05-21 16:18 UTC,10,district,ANUGUL,green,No Warning,2026-05-21 2041,2200,,,
+2026-05-21 16:18 UTC,10,district,CUTTACK,green,No Warning,2026-05-21 2041,2200,,,
+2026-05-21 16:18 UTC,10,district,DHENKANAL,green,No Warning,2026-05-21 2041,2200,,,
+2026-05-21 16:18 UTC,10,district,JAGATSINGHPUR,green,No Warning,2026-05-21 2041,2200,,,
+2026-05-21 16:18 UTC,10,district,KENDRAPARA,green,No Warning,2026-05-21 2041,2200,,,
+2026-05-21 16:18 UTC,10,district,KHORDHA,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-05-21 16:18 UTC,10,district,NAYAGARH,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-05-21 16:18 UTC,10,district,PURI,yellow,Watch,2026-05-21 2040,2200,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
