@@ -962,38 +962,22 @@ def _build_district_card(r: dict, is_new: bool) -> str:
 
 def _build_card_grid(currently_active: list, escalated_names: set) -> str:
     """
-    3-column email-safe table grid of district cards.
+    Single-column stacked district cards — one card per row, full width.
     Newly escalated cards get the NEW badge; already-active cards do not.
     Districts sorted: red first, then orange; within each color newly escalated first.
     """
-    # Sort: red before orange, new before existing within each color
     def _sort_key(r):
         rank   = COLOR_RANK.get(r["warning_color"].lower(), 0)
         is_new = 0 if r["name"].upper() in escalated_names else 1
         return (-rank, is_new)
 
     sorted_records = sorted(currently_active, key=_sort_key)
-    cards = [
-        _build_district_card(r, r["name"].upper() in escalated_names)
+    rows_html = "".join(
+        f'<tr><td style="vertical-align:top;width:100%;">{_build_district_card(r, r["name"].upper() in escalated_names)}</td></tr>'
         for r in sorted_records
-    ]
-
-    # Build 3-column table rows
-    cols = 3
-    rows_html = ""
-    for i in range(0, len(cards), cols):
-        chunk = cards[i:i + cols]
-        # Pad to full row
-        while len(chunk) < cols:
-            chunk.append("<td></td>")
-        cells = "".join(
-            f'<td style="vertical-align:top;width:33%;">{c}</td>'
-            for c in chunk
-        )
-        rows_html += f"<tr>{cells}</tr>"
-
+    )
     return f"""
-    <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+    <table style="border-collapse:collapse;width:100%;">
       {rows_html}
     </table>"""
 
@@ -1207,9 +1191,12 @@ def build_report_pdf(
             c.setFillColor(colors.HexColor("#ffffff40"))
             c.setStrokeColor(colors.white)
             c.setLineWidth(1.5)
-            c.polygon([tx, ty + ts,
-                        tx - ts * 0.87, ty - ts * 0.5,
-                        tx + ts * 0.87, ty - ts * 0.5], fill=1, stroke=1)
+            p = c.beginPath()
+            p.moveTo(tx, ty + ts)
+            p.lineTo(tx - ts * 0.87, ty - ts * 0.5)
+            p.lineTo(tx + ts * 0.87, ty - ts * 0.5)
+            p.close()
+            c.drawPath(p, fill=1, stroke=1)
             c.setFillColor(colors.white)
             c.setFont(self.fb, 10)
             c.drawCentredString(tx, ty - 4, "!")
