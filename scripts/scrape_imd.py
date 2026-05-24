@@ -851,21 +851,26 @@ def _scan_summary_bar(reported_at_ist: str, n_active: int, n_new: int) -> str:
 
 def _build_district_card(r: dict, is_new: bool) -> str:
     """
-    Single district card matching the reference image style.
-    Card header color matches severity. is_new adds a NEW badge.
+    Full-width district card — one per row.
+    Weather fields show complete raw IMD text (not short extracted values).
     """
-    color      = r["warning_color"].lower()
-    sev        = r["severity"]
-    name       = r["name"].title()
-    issued     = extract_time_only(r.get("issued_at", ""))
-    valid      = format_valid_upto(r.get("valid_upto", ""))
-    mapping    = TPCODL_MAP.get(r["name"].upper(), {})
-    circles    = ", ".join(mapping.get("circles",   ["—"]))
-    divisions  = ", ".join(mapping.get("divisions", ["—"]))
-    wv         = _parse_weather_values(r)
+    color     = r["warning_color"].lower()
+    sev       = r["severity"]
+    name      = r["name"].title()
+    issued    = extract_time_only(r.get("issued_at", ""))
+    valid     = format_valid_upto(r.get("valid_upto", ""))
+    mapping   = TPCODL_MAP.get(r["name"].upper(), {})
+    circles   = ", ".join(mapping.get("circles",   ["—"]))
+    divisions = ", ".join(mapping.get("divisions", ["—"]))
 
-    header_bg  = "#cc0000" if color == "red" else "#e07000"
-    dot_color  = "#cc0000" if color == "red" else "#e07000"
+    # Full raw text from balloon — fall back to short parsed value
+    wv          = _parse_weather_values(r)
+    rain_full   = r.get("rain_description")     or wv["rain"]
+    wind_full   = r.get("thunderstorm_desc")     or wv["wind"]
+    light_full  = r.get("lightning_probability") or wv["lightning"]
+
+    header_bg = "#cc0000" if color == "red" else "#e07000"
+    dot_color = "#cc0000" if color == "red" else "#e07000"
 
     new_badge = (
         '&nbsp;<span style="background:#fff;color:#cc0000;font-size:9px;'
@@ -874,89 +879,92 @@ def _build_district_card(r: dict, is_new: bool) -> str:
         if is_new else ""
     )
 
-    has_weather = wv["rain"] != "—" or wv["wind"] != "—" or wv["lightning"] != "—"
+    def _full_wrow(num, icon, label, value, is_last=False):
+        if not value or value == "—":
+            return ""
+        border = "" if is_last else "border-bottom:1px solid #f0f0f0;"
+        return f"""
+        <tr>
+          <td colspan="3" style="padding:0;">
+            <div style="{border}padding:10px 16px 10px 14px;">
+              <div style="display:flex;align-items:flex-start;gap:10px;">
+                <div style="min-width:22px;font-size:13px;padding-top:1px;">{icon}</div>
+                <div style="flex:1;">
+                  <div style="font-size:11px;font-weight:700;color:#888;
+                               text-transform:uppercase;letter-spacing:.5px;
+                               margin-bottom:3px;">{num}. {label}</div>
+                  <div style="font-size:12px;color:#333;line-height:1.6;">{value}</div>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>"""
 
+    has_weather = any([rain_full, wind_full, light_full])
     weather_rows = ""
     if has_weather:
-        def _wrow(icon, label, value):
-            if value == "—":
-                return ""
-            return (
-                f'<tr>'
-                f'<td style="padding:6px 14px;border-bottom:1px solid #f0f0f0;'
-                f'font-size:12px;color:#555;width:28px;">{icon}</td>'
-                f'<td style="padding:6px 4px 6px 0;border-bottom:1px solid #f0f0f0;'
-                f'font-size:12px;color:#333;font-weight:600;white-space:nowrap;">'
-                f'{label}:</td>'
-                f'<td style="padding:6px 14px 6px 8px;border-bottom:1px solid #f0f0f0;'
-                f'font-size:12px;color:#333;">{value}</td>'
-                f'</tr>'
-            )
-        weather_rows = (
-            _wrow("🌧", "Rain",      wv["rain"])
-            + _wrow("💨", "Winds",   wv["wind"])
-            + _wrow("⚡", "Lightning", wv["lightning"])
-        )
+        rows = []
+        if rain_full:  rows.append(("1", "&#x1F327;", "Rainfall",       rain_full))
+        if wind_full:  rows.append(("2", "&#x26C8;",  "Wind / Storm",   wind_full))
+        if light_full: rows.append(("3", "&#x26A1;",  "Lightning Risk",  light_full))
+        for i, (num, icon, label, val) in enumerate(rows):
+            weather_rows += _full_wrow(num, icon, label, val, is_last=(i == len(rows)-1))
 
     return f"""
     <div style="background:#fff;border-radius:10px;overflow:hidden;
                 box-shadow:0 2px 8px rgba(0,0,0,.10);
-                border:1px solid #e8e8e8;margin:6px;">
+                border:1px solid #e8e8e8;margin:0 0 12px 0;">
+
       <!-- Card header -->
-      <div style="background:{header_bg};padding:10px 14px;">
-        <div style="font-size:14px;font-weight:900;color:#fff;
-                    letter-spacing:.3px;text-align:center;">
+      <div style="background:{header_bg};padding:11px 18px;
+                  display:flex;align-items:center;justify-content:space-between;">
+        <div style="font-size:15px;font-weight:900;color:#fff;letter-spacing:.3px;">
           {name} District
         </div>
+        <div>
+          <span style="background:rgba(0,0,0,.25);color:#fff;font-size:10px;
+                       font-weight:700;padding:3px 10px;border-radius:4px;
+                       letter-spacing:.6px;">{sev.upper()}</span>
+          {new_badge}
+        </div>
       </div>
-      <!-- Card body -->
-      <table style="border-collapse:collapse;width:100%;">
-        <!-- Time -->
-        <tr>
-          <td style="padding:8px 14px 4px;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#555;width:28px;">🕐</td>
-          <td style="padding:8px 4px 4px 0;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#333;font-weight:600;white-space:nowrap;">
-                     Time:</td>
-          <td style="padding:8px 14px 4px 8px;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#333;">
-                     {issued} – {valid} Hrs</td>
-        </tr>
-        <!-- Severity -->
-        <tr style="background:rgba(0,0,0,.02);">
-          <td style="padding:6px 14px;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#555;">⚠</td>
-          <td style="padding:6px 4px 6px 0;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#333;font-weight:600;">Severity:</td>
-          <td style="padding:6px 14px 6px 8px;border-bottom:1px solid #f0f0f0;">
-            <span style="background:{dot_color};color:#fff;font-size:10px;
-                         font-weight:700;padding:2px 8px;border-radius:3px;
-                         letter-spacing:.5px;">{sev.upper()}</span>
-            {new_badge}
-          </td>
-        </tr>
-        <!-- Weather rows -->
-        {weather_rows}
-        <!-- Circle -->
-        <tr>
-          <td style="padding:6px 14px;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#555;">📍</td>
-          <td style="padding:6px 4px 6px 0;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#333;font-weight:600;white-space:nowrap;">
-                     Circle:</td>
-          <td style="padding:6px 14px 6px 8px;border-bottom:1px solid #f0f0f0;
-                     font-size:12px;color:#333;">{circles}</td>
-        </tr>
-        <!-- Divisions -->
-        <tr>
-          <td style="padding:6px 14px 10px;font-size:12px;color:#555;">🏢</td>
-          <td style="padding:6px 4px 10px 0;font-size:12px;color:#333;
-                     font-weight:600;white-space:nowrap;vertical-align:top;">
-                     Divisions:</td>
-          <td style="padding:6px 14px 10px 8px;font-size:12px;color:#333;
-                     line-height:1.5;">{divisions}</td>
-        </tr>
-      </table>
+
+      <!-- Time + Circle + Divisions row (compact top strip) -->
+      <div style="background:#fafafa;border-bottom:1px solid #f0f0f0;
+                  padding:8px 16px;display:flex;gap:24px;flex-wrap:wrap;">
+        <div>
+          <span style="font-size:10px;font-weight:700;color:#888;
+                       text-transform:uppercase;letter-spacing:.4px;">&#x1F550; Time</span>
+          <div style="font-size:12px;color:#333;margin-top:2px;font-weight:600;">
+            {issued} &ndash; {valid} Hrs
+          </div>
+        </div>
+        <div>
+          <span style="font-size:10px;font-weight:700;color:#888;
+                       text-transform:uppercase;letter-spacing:.4px;">&#x1F4CD; Circle</span>
+          <div style="font-size:12px;color:#333;margin-top:2px;">{circles}</div>
+        </div>
+        <div style="flex:1;min-width:200px;">
+          <span style="font-size:10px;font-weight:700;color:#888;
+                       text-transform:uppercase;letter-spacing:.4px;">&#x1F3E2; Divisions</span>
+          <div style="font-size:12px;color:#333;margin-top:2px;line-height:1.5;">
+            {divisions}
+          </div>
+        </div>
+      </div>
+
+      <!-- Full-text weather section -->
+      {"" if not has_weather else f'''
+      <div style="padding:4px 0 2px;">
+        <div style="padding:8px 16px 4px;font-size:10px;font-weight:700;color:#1B3A6B;
+                    text-transform:uppercase;letter-spacing:.6px;">
+          IMD Nowcast Weather Details
+        </div>
+        <table style="border-collapse:collapse;width:100%;">
+          {weather_rows}
+        </table>
+      </div>'''}
+
     </div>"""
 
 
@@ -1474,6 +1482,75 @@ def build_report_pdf(
 # ALERT EMAIL
 # ─────────────────────────────────────────────────────────────
 
+
+
+def _build_status_table(currently_active: list, escalated_names: set) -> str:
+    """
+    Compact summary table: District | Severity | Issued At | Valid Upto
+    Shown above the district cards.
+    """
+    rows = ""
+    sorted_active = sorted(
+        currently_active,
+        key=lambda r: (-COLOR_RANK.get(r["warning_color"].lower(), 0),
+                       0 if r["name"].upper() in escalated_names else 1)
+    )
+    for r in sorted_active:
+        color     = r["warning_color"].lower()
+        dot_color = "#cc0000" if color == "red" else "#e07000"
+        issued    = extract_time_only(r.get("issued_at", ""))
+        valid     = format_valid_upto(r.get("valid_upto", ""))
+        is_new    = r["name"].upper() in escalated_names
+        new_tag   = (
+            '&nbsp;<span style="background:#fff;color:#cc0000;font-size:9px;'
+            'font-weight:800;padding:1px 5px;border-radius:3px;">↑ NEW</span>'
+            if is_new else ""
+        )
+        row_bg = (
+            "background:#fff5f5;" if color == "red" else
+            "background:#fff8f0;" if color == "orange" else ""
+        )
+        rows += f"""
+        <tr style="{row_bg}">
+          <td style="padding:9px 14px;border-bottom:1px solid #f0f0f0;
+                     font-size:12px;font-weight:700;color:#1B3A6B;">
+            {r["name"].title()}
+          </td>
+          <td style="padding:9px 14px;border-bottom:1px solid #f0f0f0;">
+            <span style="background:{dot_color};color:#fff;font-size:10px;
+                         font-weight:700;padding:2px 9px;border-radius:3px;
+                         letter-spacing:.5px;">{r["severity"].upper()}</span>
+            {new_tag}
+          </td>
+          <td style="padding:9px 14px;border-bottom:1px solid #f0f0f0;
+                     font-size:12px;color:#333;">{issued} Hrs</td>
+          <td style="padding:9px 14px;border-bottom:1px solid #f0f0f0;
+                     font-size:12px;color:#333;">{valid} Hrs</td>
+        </tr>"""
+
+    return f"""
+    <table style="border-collapse:collapse;width:100%;font-family:'Segoe UI',Arial,sans-serif;">
+      <thead>
+        <tr style="background:#f5f7fb;">
+          <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                     color:#555;text-transform:uppercase;letter-spacing:.5px;
+                     border-bottom:2px solid #dde3f0;">District</th>
+          <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                     color:#555;text-transform:uppercase;letter-spacing:.5px;
+                     border-bottom:2px solid #dde3f0;">Severity</th>
+          <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                     color:#555;text-transform:uppercase;letter-spacing:.5px;
+                     border-bottom:2px solid #dde3f0;">Issued At</th>
+          <th style="padding:8px 14px;text-align:left;font-size:10px;font-weight:700;
+                     color:#555;text-transform:uppercase;letter-spacing:.5px;
+                     border-bottom:2px solid #dde3f0;">Valid Upto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows}
+      </tbody>
+    </table>"""
+
 def build_email_html(escalated: list, currently_active: list,
                      reported_at_ist: str) -> str:
     has_red        = any(r["warning_color"].lower() == "red" for r in currently_active)
@@ -1502,10 +1579,11 @@ def build_email_html(escalated: list, currently_active: list,
         badge_label,
         valid_range,
     )
-    scan_bar   = _scan_summary_bar(reported_at_ist, len(currently_active), len(escalated))
-    card_grid  = _build_card_grid(currently_active, escalated_names)
-    kala       = _build_kalabaisakhi_summary(currently_active)
-    footer     = _imd_footer(reported_at_ist)
+    scan_bar     = _scan_summary_bar(reported_at_ist, len(currently_active), len(escalated))
+    status_table = _build_status_table(currently_active, escalated_names)
+    card_grid    = _build_card_grid(currently_active, escalated_names)
+    kala         = _build_kalabaisakhi_summary(currently_active)
+    footer       = _imd_footer(reported_at_ist)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -1517,14 +1595,28 @@ def build_email_html(escalated: list, currently_active: list,
     {header}
     {scan_bar}
 
-    <!-- District Cards -->
-    <div style="padding:16px 22px 8px;">
+    <!-- District Warning Status Table -->
+    <div style="padding:14px 22px 4px;">
+      <div style="font-size:11px;font-weight:700;color:#1B3A6B;
+                  text-transform:uppercase;letter-spacing:.6px;
+                  margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+        <span style="display:inline-block;width:3px;height:12px;
+                     background:#1B3A6B;border-radius:2px;"></span>
+        DISTRICT WARNING STATUS
+      </div>
+      <div style="border:1px solid #dde3f0;border-radius:8px;overflow:hidden;">
+        {status_table}
+      </div>
+    </div>
+
+    <!-- District Detail Cards -->
+    <div style="padding:14px 22px 8px;">
       <div style="font-size:11px;font-weight:700;color:#1B3A6B;
                   text-transform:uppercase;letter-spacing:.6px;
                   margin-bottom:10px;display:flex;align-items:center;gap:8px;">
         <span style="display:inline-block;width:3px;height:12px;
                      background:#e07000;border-radius:2px;"></span>
-        DISTRICT STATUS
+        DISTRICT DETAIL
       </div>
       {card_grid}
     </div>
