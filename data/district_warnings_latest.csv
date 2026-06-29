@@ -1,9 +1,9 @@
 scraped_at,state_id,type,name,warning_color,severity,issued_at,valid_upto,rain_description,thunderstorm_desc,lightning_probability
-2026-06-29 09:20 UTC,10,district,ANUGUL,yellow,Watch,2026-06-29 1324,1624,Light rain: < 5 mm/hr,Thunderstorm with Lightning,
-2026-06-29 09:20 UTC,10,district,CUTTACK,yellow,Watch,2026-06-29 1436,1736,Light rain: < 5 mm/hr,Thunderstorm with lightning,
-2026-06-29 09:20 UTC,10,district,DHENKANAL,yellow,Watch,2026-06-29 1413,1713,Light rain: < 5 mm/hr,Thunderstorm with lightning,
-2026-06-29 09:20 UTC,10,district,JAGATSINGHPUR,orange,Alert,2026-06-29 1401,1701,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
-2026-06-29 09:20 UTC,10,district,KENDRAPARA,orange,Alert,2026-06-29 1437,1737,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
-2026-06-29 09:20 UTC,10,district,KHORDHA,yellow,Watch,2026-06-29 1327,1627,Light rain: < 5 mm/hr,Thunderstorm with lightning,
-2026-06-29 09:20 UTC,10,district,NAYAGARH,yellow,Watch,2026-06-29 1324,1624,Light rain: < 5 mm/hr,Thunderstorm with Lightning,
-2026-06-29 09:20 UTC,10,district,PURI,orange,Alert,2026-06-29 1414,1714,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
+2026-06-29 09:50 UTC,10,district,ANUGUL,yellow,Watch,2026-06-29 1324,1624,Light rain: < 5 mm/hr,Thunderstorm with Lightning,
+2026-06-29 09:50 UTC,10,district,CUTTACK,yellow,Watch,2026-06-29 1436,1736,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-29 09:50 UTC,10,district,DHENKANAL,yellow,Watch,2026-06-29 1413,1713,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-29 09:50 UTC,10,district,JAGATSINGHPUR,orange,Alert,2026-06-29 1401,1701,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
+2026-06-29 09:50 UTC,10,district,KENDRAPARA,orange,Alert,2026-06-29 1437,1737,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
+2026-06-29 09:50 UTC,10,district,KHORDHA,yellow,Watch,2026-06-29 1327,1627,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-29 09:50 UTC,10,district,NAYAGARH,yellow,Watch,2026-06-29 1324,1624,Light rain: < 5 mm/hr,Thunderstorm with Lightning,
+2026-06-29 09:50 UTC,10,district,PURI,orange,Alert,2026-06-29 1414,1714,Moderate rain: 5-15 mm/hr,Thunderstorm with lightning,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
