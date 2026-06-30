@@ -1,9 +1,9 @@
 scraped_at,state_id,type,name,warning_color,severity,issued_at,valid_upto,rain_description,thunderstorm_desc,lightning_probability
-2026-06-30 02:20 UTC,10,district,ANUGUL,orange,Alert,2026-06-30 0701,1001,Moderate rain: 5-15 mm/hr,Moderate Thunderstorms with maximum surface wind speed between 41 – 61 kmph (In gusts),Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
-2026-06-30 02:20 UTC,10,district,CUTTACK,orange,Alert,2026-06-30 0701,1001,Moderate rain: 5-15 mm/hr,Moderate Thunderstorms with maximum surface wind speed between 41 – 61 kmph (In gusts),Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
-2026-06-30 02:20 UTC,10,district,DHENKANAL,yellow,Watch,2026-06-30 0701,1001,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
-2026-06-30 02:20 UTC,10,district,JAGATSINGHPUR,orange,Alert,2026-06-30 0701,1001,Moderate rain: 5-15 mm/hr,Moderate Thunderstorms with maximum surface wind speed between 41 – 61 kmph (In gusts),Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
-2026-06-30 02:20 UTC,10,district,KENDRAPARA,yellow,Watch,2026-06-30 0729,1029,Light rain: < 5 mm/hr,Thunderstorm with lightning,
-2026-06-30 02:20 UTC,10,district,KHORDHA,yellow,Watch,2026-06-30 0729,1029,Light rain: < 5 mm/hr,Thunderstorm with lightning,
-2026-06-30 02:20 UTC,10,district,NAYAGARH,yellow,Watch,2026-06-30 0701,1001,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
-2026-06-30 02:20 UTC,10,district,PURI,yellow,Watch,2026-06-30 0729,1029,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-30 02:50 UTC,10,district,ANUGUL,yellow,Watch,2026-06-30 0757,1057,Light rain: < 5 mm/hr,,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-06-30 02:50 UTC,10,district,CUTTACK,yellow,Watch,2026-06-30 0758,1058,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-30 02:50 UTC,10,district,DHENKANAL,yellow,Watch,2026-06-30 0701,1001,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-06-30 02:50 UTC,10,district,JAGATSINGHPUR,yellow,Watch,2026-06-30 0758,1058,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-30 02:50 UTC,10,district,KENDRAPARA,yellow,Watch,2026-06-30 0729,1029,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-30 02:50 UTC,10,district,KHORDHA,yellow,Watch,2026-06-30 0729,1029,Light rain: < 5 mm/hr,Thunderstorm with lightning,
+2026-06-30 02:50 UTC,10,district,NAYAGARH,yellow,Watch,2026-06-30 0701,1001,Light rain: < 5 mm/hr,Light Thunderstorms with maximum surface wind speed less than 40 kmph,Low cloud to ground Lightning probability ( < 30% probability of lightning occurrence)
+2026-06-30 02:50 UTC,10,district,PURI,orange,Alert,2026-06-30 0733,1033,Moderate rain: 5-15 mm/hr,Thunderstorm,Moderate cloud to ground Lightning probability (30 - 60% probability of lightning occurrence)
